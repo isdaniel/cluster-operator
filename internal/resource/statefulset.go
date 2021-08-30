@@ -320,6 +320,10 @@ func (builder *StatefulSetBuilder) podTemplateSpec(previousPodAnnotations map[st
 		"prometheus.io/port":   prometheusPort,
 	}
 
+	if builder.Instance.VaultEnabled() {
+		defaultPodAnnotations = appendVaultAnnotations(defaultPodAnnotations, builder.Instance)
+	}
+
 	//Init Container resources
 	cpuRequest := k8sresource.MustParse(initContainerCPU)
 	memoryRequest := k8sresource.MustParse(initContainerMemory)
@@ -348,19 +352,7 @@ func (builder *StatefulSetBuilder) podTemplateSpec(previousPodAnnotations map[st
 			VolumeSource: corev1.VolumeSource{
 				Projected: &corev1.ProjectedVolumeSource{
 					Sources: []corev1.VolumeProjection{
-						{
-							Secret: &corev1.SecretProjection{
-								LocalObjectReference: corev1.LocalObjectReference{
-									Name: builder.Instance.ChildResourceName(DefaultUserSecretName),
-								},
-								Items: []corev1.KeyToPath{
-									{
-										Key:  "default_user.conf",
-										Path: "default_user.conf",
-									},
-								},
-							},
-						},
+
 						{
 							ConfigMap: &corev1.ConfigMapProjection{
 								LocalObjectReference: corev1.LocalObjectReference{
@@ -417,6 +409,10 @@ func (builder *StatefulSetBuilder) podTemplateSpec(previousPodAnnotations map[st
 				},
 			},
 		},
+	}
+
+	if !builder.Instance.VaultEnabled() {
+		appendDefaultUserSecret(volumes, builder.Instance)
 	}
 
 	if builder.Instance.Spec.Rabbitmq.AdvancedConfig != "" || builder.Instance.Spec.Rabbitmq.EnvConfig != "" {
@@ -686,16 +682,34 @@ func (builder *StatefulSetBuilder) podTemplateSpec(previousPodAnnotations map[st
 			},
 		},
 	}
-	if builder.Instance.VaultEnabled() {
-		podTemplateSpec = configureVault(podTemplateSpec, builder.Instance)
-	}
 
 	return podTemplateSpec
 }
 
-func configureVault(spec corev1.PodTemplateSpec, instance *rabbitmqv1beta1.RabbitmqCluster) corev1.PodTemplateSpec {
+func appendDefaultUserSecret(volumes []corev1.Volume, instance *rabbitmqv1beta1.RabbitmqCluster) {
+	for _, value := range volumes {
+		if value.Name == "rabbitmq-confd" {
+			value.VolumeSource.Projected.Sources = append(value.VolumeSource.Projected.Sources,
+				corev1.VolumeProjection{
+					Secret: &corev1.SecretProjection{
+						LocalObjectReference: corev1.LocalObjectReference{
+							Name: instance.ChildResourceName(DefaultUserSecretName),
+						},
+						Items: []corev1.KeyToPath{
+							{
+								Key:  "default_user.conf",
+								Path: "default_user.conf",
+							},
+						},
+					},
+				})
+		}
+	}
+}
 
-	// Add annotation
+func appendVaultAnnotations(current map[string]string, instance *rabbitmqv1beta1.RabbitmqCluster) map[string]string {
+
+	// Add Vault annotations
 	vaultPodAnnotations := map[string]string{
 		"vault.hashicorp.com/agent-inject":                             "true",
 		"vault.hashicorp.com/role":                                     instance.Spec.Vault.Role,
@@ -707,9 +721,8 @@ default_user = {{ .Data.data.username }}
 default_pass = {{ .Data.data.password }}
 {{- end }}`,
 	}
-	spec.Annotations = metadata.ReconcileAnnotations(spec.Annotations, vaultPodAnnotations)
+	return metadata.ReconcileAnnotations(current, vaultPodAnnotations)
 
-	return spec
 }
 
 func (builder *StatefulSetBuilder) updateContainerPorts() []corev1.ContainerPort {
