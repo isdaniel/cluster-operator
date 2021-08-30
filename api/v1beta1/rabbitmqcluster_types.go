@@ -361,6 +361,10 @@ func (cluster *RabbitmqCluster) AdditionalPluginEnabled(plugin Plugin) bool {
 	return false
 }
 
+func (cluster *RabbitmqCluster) VaultEnabled() bool {
+	return cluster.Spec.Vault.Role != "" && cluster.Spec.Vault.DefaultUserSecretPath != ""
+}
+
 // +kubebuilder:object:root=true
 
 // RabbitmqClusterList contains a list of RabbitmqClusters.
